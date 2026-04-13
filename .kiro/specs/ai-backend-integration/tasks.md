@@ -144,7 +144,11 @@
   - Test special character handling
   - _Requirements: 1.1, 1.3_
 
-- [ ] 6. Implement OCR image text extraction
+- [x] 6. Implement OCR image text extraction
+
+
+
+
   - Create image upload handling with file size validation
   - Implement Tesseract OCR integration
   - Build text extraction pipeline
@@ -152,11 +156,28 @@
   - Create /extract-text endpoint
   - _Requirements: 5.1, 5.2, 5.4_
 
-- [ ] 6.1 Write property test for file size validation
+- [x] 6.1 Write property test for file size validation
+
+
+
+
+
   - **Property 18: File size validation**
   - **Validates: Requirements 5.1**
 
-- [ ] 6.2 Write property test for OCR extraction pipeline
+- [-] 6.2 Write property test for OCR extraction pipeline
+
+
+
+
+
+
+
+
+
+
+
+
   - **Property 19: OCR extraction pipeline**
   - **Validates: Requirements 5.2, 5.3**
 

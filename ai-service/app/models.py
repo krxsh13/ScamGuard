@@ -1,6 +1,6 @@
 """Data models for API requests and responses."""
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 
 class HealthResponse(BaseModel):
@@ -50,3 +50,12 @@ class PredictResponse(BaseModel):
     linguistic_cues: LinguisticCues = Field(..., description="Linguistic cues detected in the text")
     low_confidence_warning: Optional[str] = Field(None, description="Warning message if confidence is low")
     processing_time_ms: float = Field(..., description="Processing time in milliseconds")
+
+
+
+class ExtractTextResponse(BaseModel):
+    """Response model for OCR text extraction."""
+    extracted_text: str = Field(..., description="Text extracted from the image")
+    character_count: int = Field(..., description="Number of characters extracted")
+    processing_time_ms: float = Field(..., description="Processing time in milliseconds")
+    ocr_available: bool = Field(..., description="Whether OCR engine was available")

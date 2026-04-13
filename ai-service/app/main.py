@@ -1,10 +1,16 @@
 """Main FastAPI application for ScamGuard AI Service."""
 import logging
+import time
+import io
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
 from app.config import settings
-from app.models import HealthResponse, ServiceInfo, PredictRequest, PredictResponse
+from app.models import (
+    HealthResponse, ServiceInfo, PredictRequest, PredictResponse,
+    ExtractTextResponse
+)
 from app.ml_model import ml_model
 from app.ocr import ocr_engine
 
@@ -121,6 +127,89 @@ async def predict_scam(request: PredictRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Prediction failed: {str(e)}"
+        )
+
+
+@app.post("/extract-text", response_model=ExtractTextResponse)
+async def extract_text_from_image(file: UploadFile = File(...)):
+    """
+    Extract text from an uploaded image using OCR.
+    
+    Args:
+        file: Uploaded image file (PNG, JPG, JPEG)
+        
+    Returns:
+        ExtractTextResponse with extracted text and metadata
+        
+    Raises:
+        HTTPException: If file validation fails or OCR extraction fails
+    """
+    start_time = time.time()
+    
+    # Validate file type
+    valid_mime_types = ["image/png", "image/jpeg", "image/jpg"]
+    if file.content_type not in valid_mime_types:
+        logger.warning(f"Invalid file type: {file.content_type}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Accepted types: {', '.join(valid_mime_types)}"
+        )
+    
+    # Read file content
+    try:
+        file_content = await file.read()
+    except Exception as e:
+        logger.error(f"Failed to read uploaded file: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to read uploaded file"
+        )
+    
+    # Validate file size
+    file_size = len(file_content)
+    if file_size > settings.max_image_size_bytes:
+        size_mb = file_size / (1024 * 1024)
+        logger.warning(f"File too large: {size_mb:.2f}MB (limit: {settings.max_image_size_mb}MB)")
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size exceeds limit of {settings.max_image_size_mb}MB"
+        )
+    
+    # Check if OCR is available
+    if not ocr_engine.is_available:
+        logger.error("OCR extraction requested but OCR engine is not available")
+        raise HTTPException(
+            status_code=503,
+            detail="OCR engine is not available. Please try again later."
+        )
+    
+    # Load image
+    try:
+        image = Image.open(io.BytesIO(file_content))
+    except Exception as e:
+        logger.error(f"Failed to load image: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid image file or corrupted data"
+        )
+    
+    # Extract text using OCR
+    try:
+        extracted_text = ocr_engine.extract_text(image)
+        processing_time = (time.time() - start_time) * 1000  # Convert to ms
+        
+        return ExtractTextResponse(
+            extracted_text=extracted_text,
+            character_count=len(extracted_text),
+            processing_time_ms=processing_time,
+            ocr_available=True
+        )
+        
+    except Exception as e:
+        logger.error(f"OCR extraction failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Text extraction failed: {str(e)}"
         )
 
 

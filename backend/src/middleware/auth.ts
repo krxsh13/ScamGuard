@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { verifyToken, JWTPayload } from '../utils/jwt.js';
+import { verifyAccessToken, JWTPayload } from '../utils/jwt.js';
 
 // Extend Express Request to include user
 declare global {
@@ -37,7 +37,7 @@ export function authenticate(
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
     try {
-      const payload = verifyToken(token);
+      const payload = verifyAccessToken(token);
       req.user = payload;
       next();
     } catch (error) {

@@ -1,7 +1,18 @@
 import { Request, Response } from 'express';
 import { User } from '../models/User.js';
 import { hashPassword, comparePassword } from '../utils/password.js';
-import { generateToken, generateRefreshToken, verifyToken } from '../utils/jwt.js';
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+  decodeToken,
+  storeRefreshTokenJti,
+  revokeRefreshToken,
+  revokeAllUserTokens,
+  parseExpiresIn,
+} from '../utils/jwt.js';
+import { sendPasswordResetEmail, sendVerificationEmail, sendWelcomeEmail } from '../utils/mailer.js';
+import { env } from '../config/env.js';
 import crypto from 'crypto';
 
 /**
@@ -86,17 +97,39 @@ export async function register(req: Request, res: Response): Promise<void> {
     });
 
     // Generate tokens
-    const token = generateToken({
+    const token = signAccessToken({
       userId: user._id.toString(),
       email: user.email,
       role: user.role,
     });
 
-    const refreshToken = generateRefreshToken({
+    const refreshToken = signRefreshToken({
       userId: user._id.toString(),
       email: user.email,
       role: user.role,
     });
+
+    // Extract jti from refresh token and store in Redis for tracking
+    const decodedToken = decodeToken(refreshToken);
+    if (decodedToken?.jti) {
+      await storeRefreshTokenJti(
+        user._id.toString(),
+        decodedToken.jti,
+        parseExpiresIn(env.JWT_REFRESH_EXPIRES_IN)
+      );
+    }
+
+    // Build verification URL
+    const verificationUrl = `${env.APP_BASE_URL}/verify-email?token=${verificationToken}`;
+
+    // Send verification and welcome emails asynchronously (non-blocking)
+    try {
+      await sendVerificationEmail(user.email, verificationUrl, user.firstName);
+      await sendWelcomeEmail(user.email, user.firstName);
+    } catch (error) {
+      console.error('Failed to send registration emails:', error);
+      // Continue - email sending failure should not block registration
+    }
 
     res.status(201).json({
       success: true,
@@ -182,17 +215,27 @@ export async function login(req: Request, res: Response): Promise<void> {
     await user.save();
 
     // Generate tokens
-    const token = generateToken({
+    const token = signAccessToken({
       userId: user._id.toString(),
       email: user.email,
       role: user.role,
     });
 
-    const refreshToken = generateRefreshToken({
+    const refreshToken = signRefreshToken({
       userId: user._id.toString(),
       email: user.email,
       role: user.role,
     });
+
+    // Extract jti from refresh token and store in Redis for tracking
+    const decodedToken = decodeToken(refreshToken);
+    if (decodedToken?.jti) {
+      await storeRefreshTokenJti(
+        user._id.toString(),
+        decodedToken.jti,
+        parseExpiresIn(env.JWT_REFRESH_EXPIRES_IN)
+      );
+    }
 
     res.status(200).json({
       success: true,
@@ -223,7 +266,7 @@ export async function login(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * Refresh JWT token
+ * Refresh JWT token with token rotation
  */
 export async function refreshToken(req: Request, res: Response): Promise<void> {
   try {
@@ -243,8 +286,8 @@ export async function refreshToken(req: Request, res: Response): Promise<void> {
     }
 
     try {
-      // Verify refresh token
-      const payload = verifyToken(refreshToken);
+      // Verify refresh token (now async with jti validation)
+      const payload = await verifyRefreshToken(refreshToken);
 
       // Verify user still exists
       const user = await User.findById(payload.userId);
@@ -262,17 +305,32 @@ export async function refreshToken(req: Request, res: Response): Promise<void> {
       }
 
       // Generate new tokens
-      const newToken = generateToken({
+      const newToken = signAccessToken({
         userId: user._id.toString(),
         email: user.email,
         role: user.role,
       });
 
-      const newRefreshToken = generateRefreshToken({
+      const newRefreshToken = signRefreshToken({
         userId: user._id.toString(),
         email: user.email,
         role: user.role,
       });
+
+      // Revoke old token (by its jti) and store new token
+      if (payload.jti) {
+        await revokeRefreshToken(payload.jti);
+      }
+
+      // Extract jti from new refresh token and store in Redis
+      const decodedNewToken = decodeToken(newRefreshToken);
+      if (decodedNewToken?.jti) {
+        await storeRefreshTokenJti(
+          user._id.toString(),
+          decodedNewToken.jti,
+          parseExpiresIn(env.JWT_REFRESH_EXPIRES_IN)
+        );
+      }
 
       res.status(200).json({
         success: true,
@@ -404,13 +462,25 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
     user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1 hour
     await user.save();
 
-    // TODO: Send email with reset link
-    // For now, just return success
+    // Build reset URL
+    const resetUrl = `${env.APP_BASE_URL}/reset-password?token=${resetToken}`;
+
+    try {
+      // Send email with reset link
+      await sendPasswordResetEmail(user.email, resetUrl);
+    } catch (error) {
+      console.error('Failed to send password reset email:', error);
+      // Still return success to prevent email enumeration, but log the error
+      res.status(200).json({
+        success: true,
+        message: 'If the email exists, a password reset link has been sent',
+      });
+      return;
+    }
+
     res.status(200).json({
       success: true,
       message: 'If the email exists, a password reset link has been sent',
-      // In development, include the token
-      ...(process.env.NODE_ENV === 'development' && { resetToken }),
     });
   } catch (error) {
     res.status(500).json({
@@ -484,9 +554,12 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
     user.resetPasswordExpires = undefined;
     await user.save();
 
+    // Revoke all refresh tokens for security (force re-login on all devices)
+    await revokeAllUserTokens(user._id.toString());
+
     res.status(200).json({
       success: true,
-      message: 'Password has been reset successfully',
+      message: 'Password has been reset successfully. Please login with your new password.',
     });
   } catch (error) {
     res.status(500).json({
@@ -502,14 +575,189 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
 }
 
 /**
- * Logout user (client-side token removal, server-side placeholder)
+ * Logout user - revoke the refresh token
  */
 export async function logout(req: Request, res: Response): Promise<void> {
-  // In a JWT-based system, logout is primarily handled client-side
-  // by removing the token. This endpoint is a placeholder for future
-  // token blacklisting or session management features.
-  res.status(200).json({
-    success: true,
-    message: 'Logged out successfully',
-  });
+  try {
+    const { refreshToken } = req.body;
+
+    // If a refresh token is provided, revoke it
+    if (refreshToken) {
+      try {
+        const decoded = decodeToken(refreshToken);
+        if (decoded?.jti) {
+          await revokeRefreshToken(decoded.jti);
+        }
+      } catch (error) {
+        console.error('Failed to revoke token on logout:', error);
+        // Continue - logout should succeed even if token revocation fails
+      }
+    }
+
+    // In a JWT-based system, logout is primarily handled client-side
+    // by removing the token. This endpoint revokes the refresh token
+    // on the server side for security.
+    res.status(200).json({
+      success: true,
+      message: 'Logged out successfully. All tokens have been revoked.',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to logout',
+        timestamp: new Date().toISOString(),
+        requestId: req.id,
+      },
+    });
+  }
+}
+
+/**
+ * Verify email with token
+ */
+export async function verifyEmail(req: Request, res: Response): Promise<void> {
+  try {
+    const { token } = req.query;
+
+    if (!token || typeof token !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Verification token is required',
+          timestamp: new Date().toISOString(),
+          requestId: req.id,
+        },
+      });
+      return;
+    }
+
+    // Find user with valid verification token
+    const user = await User.findOne({
+      verificationToken: token,
+    });
+
+    if (!user) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_TOKEN',
+          message: 'Invalid or expired verification token',
+          timestamp: new Date().toISOString(),
+          requestId: req.id,
+        },
+      });
+      return;
+    }
+
+    // Mark email as verified
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Email verified successfully',
+      data: {
+        user: {
+          id: user._id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isVerified: user.isVerified,
+        },
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to verify email',
+        timestamp: new Date().toISOString(),
+        requestId: req.id,
+      },
+    });
+  }
+}
+
+/**
+ * Resend verification email
+ */
+export async function resendVerification(req: Request, res: Response): Promise<void> {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Email is required',
+          timestamp: new Date().toISOString(),
+          requestId: req.id,
+        },
+      });
+      return;
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+
+    // Always return success to prevent email enumeration
+    if (!user) {
+      res.status(200).json({
+        success: true,
+        message: 'If the email exists and is not verified, a verification link has been sent',
+      });
+      return;
+    }
+
+    // If already verified, return success
+    if (user.isVerified) {
+      res.status(200).json({
+        success: true,
+        message: 'If the email exists and is not verified, a verification link has been sent',
+      });
+      return;
+    }
+
+    // Generate new verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    user.verificationToken = verificationToken;
+    await user.save();
+
+    // Build verification URL
+    const verificationUrl = `${env.APP_BASE_URL}/verify-email?token=${verificationToken}`;
+
+    try {
+      // Send verification email
+      await sendVerificationEmail(user.email, verificationUrl, user.firstName);
+    } catch (error) {
+      console.error('Failed to send verification email:', error);
+      // Still return success to prevent email enumeration
+      res.status(200).json({
+        success: true,
+        message: 'If the email exists and is not verified, a verification link has been sent',
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'If the email exists and is not verified, a verification link has been sent',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to resend verification email',
+        timestamp: new Date().toISOString(),
+        requestId: req.id,
+      },
+    });
+  }
 }

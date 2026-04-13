@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { generateToken, verifyToken, decodeToken, JWTPayload } from './jwt.js';
+import { signAccessToken, verifyAccessToken, decodeToken, JWTPayload } from './jwt.js';
 
 describe('JWT Token Structure', () => {
   /**
@@ -22,7 +22,7 @@ describe('JWT Token Structure', () => {
           const beforeGeneration = Date.now();
           
           // Generate token
-          const token = generateToken(payload);
+          const token = signAccessToken(payload);
 
           const afterGeneration = Date.now();
 
@@ -36,7 +36,7 @@ describe('JWT Token Structure', () => {
           expect(parts).toHaveLength(3);
 
           // Property 3: Token must be verifiable
-          const decoded = verifyToken(token);
+          const decoded = verifyAccessToken(token);
           expect(decoded).toBeTruthy();
 
           // Property 4: Decoded token must contain the user ID
@@ -94,15 +94,15 @@ describe('JWT Token Structure', () => {
             return true;
           }
 
-          const token1 = generateToken(payload1);
-          const token2 = generateToken(payload2);
+          const token1 = signAccessToken(payload1);
+          const token2 = signAccessToken(payload2);
 
           // Property: Different payloads should produce different tokens
           expect(token1).not.toBe(token2);
 
           // Both tokens should be valid
-          const decoded1 = verifyToken(token1);
-          const decoded2 = verifyToken(token2);
+          const decoded1 = verifyAccessToken(token1);
+          const decoded2 = verifyAccessToken(token2);
 
           expect(decoded1.userId).toBe(payload1.userId);
           expect(decoded2.userId).toBe(payload2.userId);
@@ -123,7 +123,7 @@ describe('JWT Token Structure', () => {
           }
 
           // Property: Invalid tokens should throw an error
-          expect(() => verifyToken(invalidToken)).toThrow();
+          expect(() => verifyAccessToken(invalidToken)).toThrow();
         }
       ),
       { numRuns: 100 }

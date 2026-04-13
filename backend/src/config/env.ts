@@ -32,6 +32,11 @@ const envSchema = z.object({
   VIRUSTOTAL_API_KEY: z.string().optional(),
   PHISHTANK_API_KEY: z.string().optional(),
 
+  // Email
+  RESEND_API_KEY: z.string(),
+  RESEND_FROM_EMAIL: z.string().email(),
+  APP_BASE_URL: z.string().url(),
+
   // Security
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   RATE_LIMIT_WINDOW_MS: z.string().transform(Number).pipe(z.number().positive()).default('900000'),
