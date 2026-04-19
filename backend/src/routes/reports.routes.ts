@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { createReport, getReport } from '../controllers/reports.controller.js';
+import {
+  createReport,
+  getReports,
+  getReport,
+  getAdminReports,
+  updateReportStatus,
+} from '../controllers/report.controller.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireVerified } from '../middleware/emailVerification.js';
 import { validate } from '../middleware/validate.js';
@@ -8,14 +14,15 @@ import { scanLimiter } from '../middleware/security.js';
 
 const router = Router();
 
-// All report routes require authentication and email verification
-router.use(authenticate);
-router.use(requireVerified);
+// Create report route (authenticated users only)
+router.post('/', authenticate, requireVerified, scanLimiter, validate(createReportSchema), createReport);
 
-// Create a new report with validation and rate limiting
-router.post('/', scanLimiter, validate(createReportSchema), createReport);
+// Public routes (no auth required for reading verified reports)
+router.get('/', getReports);
+router.get('/:id', getReport);
 
-// Get report by ID
-router.get('/:reportId', getReport);
+// Admin routes (auth required with admin role)
+router.get('/admin/reports', authenticate, getAdminReports);
+router.patch('/admin/reports/:id/status', authenticate, validate(createReportSchema), updateReportStatus);
 
 export default router;

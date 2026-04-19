@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { submitScan, getScanResult, getScanHistory } from '../controllers/scans.controller.js';
+import { submitScan, getScanResult, getScanHistory, deleteScan } from '../controllers/scans.controller.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireVerified } from '../middleware/emailVerification.js';
 import { validate } from '../middleware/validate.js';
@@ -15,10 +15,13 @@ router.use(requireVerified);
 // Submit a new scan with validation and rate limiting
 router.post('/', scanLimiter, validate(submitScanSchema), submitScan);
 
-// Get scan result
+// Get scan history (paginated)
+router.get('/', getScanHistory);
+
+// Get single scan result
 router.get('/:scanId', getScanResult);
 
-// Get scan history
-router.get('/', getScanHistory);
+// Delete (soft-delete) a scan
+router.delete('/:id', deleteScan);
 
 export default router;

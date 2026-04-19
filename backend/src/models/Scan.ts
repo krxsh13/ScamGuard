@@ -5,6 +5,8 @@ export interface IScan extends Document {
   type: 'text' | 'url' | 'image';
   content: string;
   imageUrl?: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  error?: string;
   results: {
     riskScore: number;
     riskLevel: 'low' | 'medium' | 'high';
@@ -46,7 +48,9 @@ export interface IScan extends Document {
     };
   };
   createdAt: Date;
+  updatedAt: Date;
   processingTime: number;
+  deletedAt?: Date | null;
 }
 
 const scanSchema = new Schema<IScan>(
@@ -67,6 +71,15 @@ const scanSchema = new Schema<IScan>(
       required: true,
     },
     imageUrl: {
+      type: String,
+    },
+    status: {
+      type: String,
+      enum: ['queued', 'processing', 'completed', 'failed'],
+      default: 'queued',
+      index: true,
+    },
+    error: {
       type: String,
     },
     results: {
@@ -153,16 +166,46 @@ const scanSchema = new Schema<IScan>(
       type: Number,
       required: true,
     },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// Compound index for efficient user scan history queries
-scanSchema.index({ userId: 1, createdAt: -1 });
+// Compound index for efficient user scan history queries (exclude soft-deleted)
+scanSchema.index({ userId: 1, createdAt: -1, deletedAt: 1 });
 
 // Index for analytics queries
 scanSchema.index({ 'results.riskLevel': 1, createdAt: -1 });
+
+// Post-save hook to update user statistics
+scanSchema.post('save', async function (doc: IScan) {
+  try {
+    const { User } = await import('./User.js');
+    
+    // Increment total scans
+    await User.findByIdAndUpdate(
+      doc.userId,
+      { $inc: { 'stats.totalScans': 1 } },
+      { new: false }
+    );
+
+    // Increment scams detected if marked as scam
+    if (doc.results?.aiPrediction?.isScam || doc.results?.riskLevel === 'high') {
+      await User.findByIdAndUpdate(
+        doc.userId,
+        { $inc: { 'stats.scamsDetected': 1 } },
+        { new: false }
+      );
+    }
+  } catch (error) {
+    console.error('Failed to update user statistics:', error);
+    // Don't throw - stats update failure shouldn't block scan saving
+  }
+});
 
 export const Scan = mongoose.model<IScan>('Scan', scanSchema);

@@ -7,8 +7,9 @@ import { Education } from './components/Education';
 import { Quiz } from './components/Quiz';
 import { Footer } from './components/Footer';
 import { NotFound } from './pages/NotFound';
+import { AuthProvider } from './context/AuthContext';
 
-function App() {
+function AppContent() {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -49,6 +50,18 @@ function App() {
 
       <Footer />
     </div>
+  );
+}
+
+/**
+ * Root App component wrapped with AuthProvider
+ * Provides authentication context to all child components
+ */
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

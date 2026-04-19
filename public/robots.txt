@@ -1,0 +1,14 @@
+# Robots.txt for ScamGuard
+# Allow all crawlers to index the site
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /private/
+
+# Crawl delay for efficient server usage (optional)
+Crawl-delay: 1
+
+# Point to sitemap
+Sitemap: https://scamguard.io/sitemap.xml

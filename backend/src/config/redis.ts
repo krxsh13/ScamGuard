@@ -62,6 +62,11 @@ export function getRedisClient(): RedisClient {
   return redisClient;
 }
 
+// Alias for BullMQ compatibility
+export function getRedisConnection(): RedisClient {
+  return getRedisClient();
+}
+
 process.on('SIGINT', async () => {
   await disconnectRedis();
 });

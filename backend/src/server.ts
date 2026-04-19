@@ -3,6 +3,7 @@ import { connectDatabase } from './config/database.js';
 import { connectRedis } from './config/redis.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import scanWorker from './workers/scan.worker.js';
 
 async function startServer() {
   try {
@@ -11,6 +12,13 @@ async function startServer() {
 
     // Connect to Redis
     await connectRedis();
+
+    // Start the scan worker
+    logger.info('Starting scan worker for job queue processing');
+    // Worker is initialized on import, just confirm it's ready
+    if (scanWorker) {
+      logger.info('Scan worker initialized and ready to process jobs');
+    }
 
     // Create Express app
     const app = createApp();
@@ -29,6 +37,10 @@ async function startServer() {
         logger.info('HTTP server closed');
         
         try {
+          // Close worker
+          await scanWorker.close();
+          logger.info('Scan worker closed');
+
           const { disconnectDatabase } = await import('./config/database.js');
           const { disconnectRedis } = await import('./config/redis.js');
           

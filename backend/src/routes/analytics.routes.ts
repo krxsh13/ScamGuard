@@ -1,18 +1,21 @@
 import { Router } from 'express';
-import { getUserStats, getRiskDistribution } from '../controllers/analytics.controller.js';
+import {
+  getSummary,
+  getUserStats,
+  getTrends,
+} from '../controllers/analytics.controller.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireVerified } from '../middleware/emailVerification.js';
 
 const router = Router();
 
-// All analytics routes require authentication and email verification
-router.use(authenticate);
-router.use(requireVerified);
+// GET /api/analytics/summary - Public platform-level stats (cached)
+router.get('/summary', getSummary);
 
-// Get user statistics
-router.get('/stats', getUserStats);
+// GET /api/analytics/trends - Public scan volume trends (30 days)
+router.get('/trends', getTrends);
 
-// Get risk distribution
-router.get('/distribution', getRiskDistribution);
+// GET /api/analytics/user - Authenticated user personal stats
+router.get('/user', authenticate, requireVerified, getUserStats);
 
 export default router;

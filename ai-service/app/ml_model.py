@@ -2,10 +2,19 @@
 import logging
 import re
 import time
-from typing import Dict, List, Tuple
+import hashlib
+import json
+from typing import Dict, List, Tuple, Optional
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 from app.config import settings
+
+# Try to import redis, but don't fail if not available
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +53,17 @@ class MLModel:
         self.model = None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self._loaded = False
+        self.redis_client: Optional[redis.Redis] = None
+        
+        # Initialize Redis if available and enabled
+        if REDIS_AVAILABLE and settings.cache_predictions:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+                self.redis_client.ping()
+                logger.info(f"Connected to Redis: {settings.redis_url}")
+            except Exception as e:
+                logger.warning(f"Failed to connect to Redis: {str(e)}")
+                self.redis_client = None
     
     def load(self):
         """Load the DistilBERT model and tokenizer."""
@@ -73,6 +93,47 @@ class MLModel:
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self._loaded
+    
+    def _get_cache_key(self, text: str) -> str:
+        """
+        Generate a cache key for the given text.
+        Uses SHA256 hash of first 512 characters.
+        """
+        truncated = text[:512]
+        hash_value = hashlib.sha256(truncated.encode()).hexdigest()
+        return f"pred:{hash_value}"
+    
+    def _get_cached_result(self, cache_key: str) -> Optional[Dict]:
+        """
+        Retrieve cached prediction result from Redis.
+        Returns None if not found or Redis not available.
+        """
+        if not self.redis_client:
+            return None
+        
+        try:
+            cached = self.redis_client.get(cache_key)
+            if cached:
+                result = json.loads(cached)
+                logger.debug(f"Cache hit for key {cache_key}")
+                return result
+        except Exception as e:
+            logger.warning(f"Failed to get cache: {str(e)}")
+        
+        return None
+    
+    def _set_cached_result(self, cache_key: str, result: Dict, ttl_seconds: int = 86400) -> None:
+        """
+        Store prediction result in Redis with TTL (default 24 hours).
+        """
+        if not self.redis_client:
+            return
+        
+        try:
+            self.redis_client.setex(cache_key, ttl_seconds, json.dumps(result))
+            logger.debug(f"Cached result for key {cache_key}")
+        except Exception as e:
+            logger.warning(f"Failed to cache result: {str(e)}")
     
     def preprocess_text(self, text: str) -> str:
         """
@@ -213,6 +274,7 @@ class MLModel:
     def predict(self, text: str) -> Dict:
         """
         Predict if text is a scam with detailed analysis.
+        Uses Redis caching to improve performance for duplicate predictions.
         
         Args:
             text: Input text to analyze
@@ -225,8 +287,16 @@ class MLModel:
         
         start_time = time.time()
         
-        # Preprocess text
+        # Preprocess text first for consistent cache key generation
         processed_text = self.preprocess_text(text)
+        cache_key = self._get_cache_key(processed_text)
+        
+        # Check cache first
+        cached_result = self._get_cached_result(cache_key)
+        if cached_result is not None:
+            # Add cache hit indicator to the result
+            cached_result["cache_hit"] = True
+            return cached_result
         
         # Extract linguistic cues
         linguistic_cues = self.extract_linguistic_cues(processed_text)
@@ -277,7 +347,7 @@ class MLModel:
         # Calculate processing time
         processing_time_ms = (time.time() - start_time) * 1000
         
-        return {
+        result = {
             "risk_score": risk_score,
             "risk_level": risk_level,
             "confidence": round(confidence_percentage, 2),
@@ -285,8 +355,14 @@ class MLModel:
             "detected_patterns": detected_patterns,
             "linguistic_cues": linguistic_cues,
             "low_confidence_warning": low_confidence_warning,
-            "processing_time_ms": round(processing_time_ms, 2)
+            "processing_time_ms": round(processing_time_ms, 2),
+            "cache_hit": False
         }
+        
+        # Cache the result for future requests
+        self._set_cached_result(cache_key, result)
+        
+        return result
 
 
 # Global model instance

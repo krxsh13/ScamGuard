@@ -1,17 +1,17 @@
 import { Request, Response } from 'express';
 import { Scan } from '../models/Scan.js';
-import axios from 'axios';
-import { env } from '../config/env.js';
+import { paginate } from '../utils/pagination.js';
+import { scansQueue } from '../queues/scan.queue.js';
+import { logger } from '../config/logger.js';
 
 /**
- * Submit a new scan request
+ * Submit a new scan for processing
+ * POST /api/scans
+ * Returns 202 Accepted with jobId immediately
  */
 export async function submitScan(req: Request, res: Response): Promise<void> {
   try {
-    const { type, content, imageUrl } = req.body;
-    const userId = req.user?.userId;
-
-    if (!userId) {
+    if (!req.user) {
       res.status(401).json({
         success: false,
         error: {
@@ -24,39 +24,21 @@ export async function submitScan(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Validate input
-    if (!type || !['text', 'url', 'image'].includes(type)) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Type must be text, url, or image',
-          timestamp: new Date().toISOString(),
-          requestId: req.id,
-        },
-      });
-      return;
+    const { type, content, imageUrl } = req.body;
+
+    // Prepare input based on type
+    let input = content;
+    if (type === 'image' && imageUrl) {
+      input = imageUrl;
     }
 
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Content is required',
-          timestamp: new Date().toISOString(),
-          requestId: req.id,
-        },
-      });
-      return;
-    }
-
-    // Create scan record with pending status
+    // Create scan record with 'queued' status
     const scan = await Scan.create({
-      userId,
+      userId: req.user.userId,
       type,
       content,
       imageUrl,
+      status: 'queued',
       results: {
         riskScore: 0,
         riskLevel: 'low',
@@ -72,40 +54,31 @@ export async function submitScan(req: Request, res: Response): Promise<void> {
           },
         },
       },
+      processingTime: 0,
     });
 
-    // Queue the scan for processing via AI service
-    // Try to queue asynchronously without blocking the response
+    // Enqueue job for async processing
     try {
-      if (env.AI_SERVICE_URL) {
-        axios.post(`${env.AI_SERVICE_URL}/api/scan`, {
-          scanId: scan._id,
-          type,
-          content,
-          imageUrl,
-        }).catch(err => {
-          console.error('Failed to queue scan to AI service:', err.message);
-        });
-      }
+      const job = await scansQueue.add('process-scan', {
+        scanId: scan._id.toString(),
+        userId: req.user.userId,
+        input,
+        type,
+        timestamp: Date.now(),
+      });
+
+      logger.info(`Scan job enqueued: ${job.id} for scan ${scan._id}`);
     } catch (error) {
-      console.error('Error queuing scan:', error);
+      logger.error('Failed to enqueue scan:', error);
+      // Continue - return success anyway with scan in queued status
     }
 
-    res.status(201).json({
+    // Return 202 Accepted with job ID
+    res.status(202).json({
       success: true,
       data: {
-        id: scan._id.toString(),
-        status: 'pending',
-        riskScore: 0,
-        riskLevel: 'low',
-        confidence: 0,
-        detectedPatterns: [],
-        linguisticCues: {
-          urgency: 0,
-          financialPressure: 0,
-          emotionalManipulation: 0,
-        },
-        createdAt: scan.createdAt.toISOString(),
+        jobId: scan._id.toString(),
+        status: 'queued',
       },
     });
   } catch (error) {
@@ -123,13 +96,11 @@ export async function submitScan(req: Request, res: Response): Promise<void> {
 
 /**
  * Get scan result by ID
+ * GET /api/scans/:scanId
  */
 export async function getScanResult(req: Request, res: Response): Promise<void> {
   try {
-    const { scanId } = req.params;
-    const userId = req.user?.userId;
-
-    if (!userId) {
+    if (!req.user) {
       res.status(401).json({
         success: false,
         error: {
@@ -142,7 +113,12 @@ export async function getScanResult(req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const scan = await Scan.findById(scanId);
+    const { scanId } = req.params;
+    const scan = await Scan.findOne({
+      _id: scanId,
+      userId: req.user.userId,
+      deletedAt: null,
+    });
 
     if (!scan) {
       res.status(404).json({
@@ -157,37 +133,20 @@ export async function getScanResult(req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Verify ownership
-    if (scan.userId.toString() !== userId) {
-      res.status(403).json({
-        success: false,
-        error: {
-          code: 'FORBIDDEN',
-          message: 'Not authorized to access this scan',
-          timestamp: new Date().toISOString(),
-          requestId: req.id,
-        },
-      });
-      return;
-    }
-
-    // Determine status based on whether results are populated
-    const status = scan.results.riskScore > 0 || scan.results.riskLevel !== 'low' ? 'completed' : 'processing';
-
     res.status(200).json({
       success: true,
       data: {
         id: scan._id.toString(),
-        status,
+        status: scan.status,
         riskScore: scan.results.riskScore,
         riskLevel: scan.results.riskLevel,
         confidence: scan.results.confidence,
         detectedPatterns: scan.results.aiPrediction.detectedPatterns,
         linguisticCues: scan.results.aiPrediction.linguisticCues,
         threatIntelligence: scan.results.threatIntel,
-        error: status === 'failed' ? 'Scan failed to process' : undefined,
+        error: scan.error,
         createdAt: scan.createdAt.toISOString(),
-        completedAt: status === 'completed' ? new Date().toISOString() : undefined,
+        updatedAt: scan.updatedAt.toISOString(),
       },
     });
   } catch (error) {
@@ -195,7 +154,7 @@ export async function getScanResult(req: Request, res: Response): Promise<void> 
       success: false,
       error: {
         code: 'INTERNAL_ERROR',
-        message: 'Failed to get scan result',
+        message: 'Failed to fetch scan',
         timestamp: new Date().toISOString(),
         requestId: req.id,
       },
@@ -204,14 +163,12 @@ export async function getScanResult(req: Request, res: Response): Promise<void> 
 }
 
 /**
- * Get scan history for authenticated user
+ * Get paginated scan history for authenticated user
+ * GET /api/scans?page=1&limit=20&sort=createdAt:desc
  */
 export async function getScanHistory(req: Request, res: Response): Promise<void> {
   try {
-    const userId = req.user?.userId;
-    const { limit = 20, skip = 0 } = req.query;
-
-    if (!userId) {
+    if (!req.user) {
       res.status(401).json({
         success: false,
         error: {
@@ -224,38 +181,91 @@ export async function getScanHistory(req: Request, res: Response): Promise<void>
       return;
     }
 
-    const scans = await Scan.find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit as string) || 20)
-      .skip(parseInt(skip as string) || 0)
-      .select('-content -imageUrl'); // Exclude sensitive data
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const sort = (req.query.sort as string) || 'createdAt:desc';
 
-    const total = await Scan.countDocuments({ userId });
+    // Exclude soft-deleted scans
+    const result = await paginate(Scan, { userId: req.user.userId, deletedAt: null }, {
+      page,
+      limit,
+      sort,
+    });
 
     res.status(200).json({
       success: true,
-      data: {
-        scans: scans.map(scan => ({
-          id: scan._id.toString(),
-          type: scan.type,
-          riskScore: scan.results.riskScore,
-          riskLevel: scan.results.riskLevel,
-          confidence: scan.results.confidence,
-          createdAt: scan.createdAt.toISOString(),
-        })),
-        pagination: {
-          total,
-          limit: parseInt(limit as string) || 20,
-          skip: parseInt(skip as string) || 0,
-        },
-      },
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.totalPages,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       error: {
         code: 'INTERNAL_ERROR',
-        message: 'Failed to get scan history',
+        message: 'Failed to fetch scan history',
+        timestamp: new Date().toISOString(),
+        requestId: req.id,
+      },
+    });
+  }
+}
+
+/**
+ * Soft-delete a scan (add deletedAt timestamp)
+ * DELETE /api/scans/:id
+ */
+export async function deleteScan(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          timestamp: new Date().toISOString(),
+          requestId: req.id,
+        },
+      });
+      return;
+    }
+
+    const { id } = req.params;
+    const scan = await Scan.findOneAndUpdate(
+      {
+        _id: id,
+        userId: req.user.userId,
+        deletedAt: null,
+      },
+      { deletedAt: new Date() },
+      { new: true }
+    );
+
+    if (!scan) {
+      res.status(404).json({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Scan not found',
+          timestamp: new Date().toISOString(),
+          requestId: req.id,
+        },
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Scan deleted successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to delete scan',
         timestamp: new Date().toISOString(),
         requestId: req.id,
       },

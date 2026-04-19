@@ -9,9 +9,11 @@ class Settings(BaseSettings):
     python_env: str = "development"
     port: int = 8000
     model_path: str = "distilbert-base-uncased"
+    model_version: str = "1.0.0"
     ocr_language: str = "eng"
     max_image_size_mb: int = 5
     cache_predictions: bool = False
+    redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     
     @property
