@@ -1,9 +1,33 @@
+/**
+ * IMPORTANT: Instrumentation must be imported FIRST, before any other imports
+ * This initializes OpenTelemetry for distributed tracing
+ */
+import './instrumentation.js';
+
+import * as Sentry from '@sentry/node';
 import { createApp } from './app.js';
 import { connectDatabase } from './config/database.js';
 import { connectRedis } from './config/redis.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import scanWorker from './workers/scan.worker.js';
+
+// Initialize Sentry
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: env.NODE_ENV,
+    tracesSampleRate: env.NODE_ENV === 'production' ? 0.1 : 0.5,
+    integrations: [
+      new Sentry.Integrations.Http({ tracing: true }),
+      new Sentry.Integrations.OnUncaughtException(),
+      new Sentry.Integrations.OnUnhandledRejection(),
+    ],
+  });
+  logger.info('Sentry error tracking initialized');
+} else {
+  logger.info('Sentry not configured. Set SENTRY_DSN to enable error tracking.');
+}
 
 async function startServer() {
   try {

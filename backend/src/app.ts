@@ -1,4 +1,5 @@
 import express, { Application } from 'express';
+import * as Sentry from '@sentry/node';
 import {
   corsMiddleware,
   helmetMiddleware,
@@ -8,6 +9,7 @@ import {
   requestLogger,
   sanitizeInput,
 } from './middleware/security.js';
+import { metricsMiddleware, createMetricsRouter } from './middleware/metrics.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { logger } from './config/logger.js';
 import authRoutes from './routes/auth.routes.js';
@@ -21,6 +23,11 @@ export function createApp(): Application {
 
   // Trust proxy (for rate limiting behind reverse proxy)
   app.set('trust proxy', 1);
+
+  // Sentry request handler must be first
+  if (process.env.SENTRY_DSN) {
+    app.use(Sentry.Handlers.requestHandler());
+  }
 
   // Body parsing middleware
   app.use(express.json({ limit: '10mb' }));
@@ -36,6 +43,9 @@ export function createApp(): Application {
   app.use(globalLimiter); // Apply global rate limiter
   app.use(sanitizeInput);
 
+  // Metrics middleware (track HTTP requests)
+  app.use(metricsMiddleware);
+
   // Logging middleware
   app.use(requestLogger);
 
@@ -49,6 +59,9 @@ export function createApp(): Application {
     });
   });
 
+  // Metrics endpoint
+  app.use(createMetricsRouter());
+
   // API routes
   app.use('/api/auth', authRoutes);
   app.use('/api/scans', scansRoutes);
@@ -59,10 +72,15 @@ export function createApp(): Application {
   // 404 handler
   app.use(notFoundHandler);
 
+  // Sentry error handler must be before other error handlers
+  if (process.env.SENTRY_DSN) {
+    app.use(Sentry.Handlers.errorHandler());
+  }
+
   // Error handler (must be last)
   app.use(errorHandler);
 
-  logger.info('Express app created with all middleware configured');
+  logger.info('Express app created with all middleware and observability configured');
 
   return app;
 }
