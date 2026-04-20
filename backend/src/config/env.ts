@@ -1,8 +1,17 @@
-import dotenv from 'dotenv';
+import { config } from 'dotenv-flow';
 import { z } from 'zod';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from dotenv-flow
+// Automatically loads from:
+// - .env
+// - .env.local
+// - .env.${NODE_ENV}
+// - .env.${NODE_ENV}.local
+// Later files override earlier ones, and process.env has highest priority
+config({
+  node_env: process.env.NODE_ENV || 'development',
+  path: process.cwd(),
+});
 
 // Environment variable schema
 const envSchema = z.object({
