@@ -2,15 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { JWTPayload } from '../utils/jwt.js';
 import { User } from '../models/User.js';
 
-// Extend Express Request to include user
-declare global {
-  namespace Express {
-    interface Request {
-      user?: JWTPayload & { isVerified?: boolean };
-    }
-  }
-}
-
 /**
  * Middleware to require verified email
  * Returns 403 if user's email is not verified
@@ -64,7 +55,9 @@ export async function requireVerified(
     }
 
     // Add isVerified flag to request for later use
-    req.user.isVerified = true;
+    if (req.user) {
+      (req.user as any).isVerified = true;
+    }
     next();
   } catch (error) {
     res.status(500).json({

@@ -59,7 +59,7 @@ export async function submitScan(req: Request, res: Response): Promise<void> {
 
     // Enqueue job for async processing
     try {
-      const job = await scansQueue.add('process-scan', {
+      const job = await scansQueue.add('process-scan' as any, {
         scanId: scan._id.toString(),
         userId: req.user.userId,
         input,

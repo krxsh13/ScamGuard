@@ -53,6 +53,14 @@ const envSchema = z.object({
 
   // Logging
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
+
+  // Data Retention & Compliance
+  DATA_RETENTION_DAYS: z.string().transform(Number).pipe(z.number().positive()).default('90'),
+
+  // Observability
+  SENTRY_DSN: z.string().optional(),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  METRICS_ALLOWLIST: z.string().default('127.0.0.1,localhost,::1,::ffff:127.0.0.1'),
 });
 
 // Validate and parse environment variables

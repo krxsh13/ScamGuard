@@ -58,6 +58,7 @@ export async function getSummary(req: Request, res: Response): Promise<void> {
         { $match: { status: 'verified' } },
         { $unwind: '$scamType' },
         { $group: { _id: '$scamType', count: { $sum: 1 } } },
+        { $project: { _id: 1, count: 1, userId: 0 } }, // Anonymize: exclude userId
         { $sort: { count: -1 } },
         { $limit: 10 },
       ]),
@@ -68,6 +69,7 @@ export async function getSummary(req: Request, res: Response): Promise<void> {
           _id: '$results.riskLevel',
           count: { $sum: 1 },
         }},
+        { $project: { _id: 1, count: 1, userId: 0 } }, // Anonymize: exclude userId
       ]),
     ]);
 
@@ -205,6 +207,15 @@ export async function getTrends(req: Request, res: Response): Promise<void> {
               $cond: [{ $eq: ['$results.riskLevel', 'medium'] }, 1, 0],
             },
           },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          count: 1,
+          highRiskCount: 1,
+          mediumRiskCount: 1,
+          userId: 0, // Anonymize: exclude userId
         },
       },
       {

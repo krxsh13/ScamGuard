@@ -10,9 +10,11 @@ export interface IUser extends Document {
   updatedAt: Date;
   lastLogin: Date;
   isVerified: boolean;
+  isDeleted?: boolean;
   verificationToken?: string;
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
+  emailVerificationExpires?: Date;
   preferences: {
     emailNotifications: boolean;
     theme: 'light' | 'dark';
@@ -63,6 +65,11 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     verificationToken: {
       type: String,
     },
@@ -70,6 +77,9 @@ const userSchema = new Schema<IUser>(
       type: String,
     },
     resetPasswordExpires: {
+      type: Date,
+    },
+    emailVerificationExpires: {
       type: Date,
     },
     preferences: {
@@ -113,5 +123,25 @@ const userSchema = new Schema<IUser>(
 
 // Index for faster email lookups
 userSchema.index({ email: 1 });
+
+// Compound index for admin user management queries
+userSchema.index({ isVerified: 1, createdAt: -1 });
+
+// TTL indexes for auto-cleanup of expired tokens
+userSchema.index(
+  { emailVerificationExpires: 1 },
+  {
+    expireAfterSeconds: 0,
+    sparse: true, // Only apply TTL if field exists
+  }
+);
+
+userSchema.index(
+  { resetPasswordExpires: 1 },
+  {
+    expireAfterSeconds: 0,
+    sparse: true,
+  }
+);
 
 export const User = mongoose.model<IUser>('User', userSchema);

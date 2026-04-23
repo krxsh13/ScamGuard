@@ -19,7 +19,7 @@ export interface ScanJobData {
 const redisConnection = getRedisConnection();
 
 export const scansQueue = new Queue<ScanJobData>('scans', {
-  connection: redisConnection,
+  connection: redisConnection as any,
   defaultJobOptions: {
     attempts: 2, // Retry failed jobs up to 2 times
     backoff: {
@@ -36,11 +36,11 @@ export const scansQueue = new Queue<ScanJobData>('scans', {
 });
 
 // Log queue events
-scansQueue.on('completed', (job) => {
+scansQueue.on('completed' as any, (job: any) => {
   logger.info(`Scan job completed: ${job.id} for scan ${job.data.scanId}`);
 });
 
-scansQueue.on('failed', (job, err) => {
+scansQueue.on('failed' as any, (job: any, err: Error) => {
   logger.error(`Scan job failed: ${job?.id} - ${err.message}`);
 });
 

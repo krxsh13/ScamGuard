@@ -11,6 +11,7 @@ import { connectRedis } from './config/redis.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import scanWorker from './workers/scan.worker.js';
+import { startRetentionJob, stopRetentionJob } from './jobs/retention.js';
 
 // Initialize Sentry
 if (process.env.SENTRY_DSN) {
@@ -19,9 +20,10 @@ if (process.env.SENTRY_DSN) {
     environment: env.NODE_ENV,
     tracesSampleRate: env.NODE_ENV === 'production' ? 0.1 : 0.5,
     integrations: [
-      new Sentry.Integrations.Http({ tracing: true }),
-      new Sentry.Integrations.OnUncaughtException(),
-      new Sentry.Integrations.OnUnhandledRejection(),
+      Sentry.httpIntegration(),
+      Sentry.expressIntegration(),
+      Sentry.onUncaughtExceptionIntegration(),
+      Sentry.onUnhandledRejectionIntegration(),
     ],
   });
   logger.info('Sentry error tracking initialized');
@@ -44,8 +46,16 @@ async function startServer() {
       logger.info('Scan worker initialized and ready to process jobs');
     }
 
+    // Start the data retention job
+    startRetentionJob();
+
     // Create Express app
     const app = createApp();
+
+    // Setup Sentry error handler (must be after all other middleware but before listening)
+    if (process.env.SENTRY_DSN) {
+      Sentry.setupExpressErrorHandler(app);
+    }
 
     // Start server
     const server = app.listen(env.PORT, () => {
@@ -57,6 +67,9 @@ async function startServer() {
     const gracefulShutdown = async (signal: string) => {
       logger.info(`${signal} received, starting graceful shutdown`);
       
+      // Stop scheduled jobs
+      stopRetentionJob();
+
       server.close(async () => {
         logger.info('HTTP server closed');
         

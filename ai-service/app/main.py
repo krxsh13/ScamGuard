@@ -2,8 +2,9 @@
 import logging
 import time
 import io
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from PIL import Image
@@ -15,12 +16,16 @@ from app.models import (
 from app.ml_model import ml_model
 from app.ocr import ocr_engine
 
-# Configure logging
+# Configure logging with request_id context
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - [%(request_id)s] - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Context variable to store request_id across log calls
+import contextvars
+request_id_var = contextvars.ContextVar('request_id', default='unknown')
 
 
 @asynccontextmanager
@@ -45,6 +50,42 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down AI Service...")
 
 
+# Custom logging filter to include request_id
+class RequestIDFilter(logging.Filter):
+    """Logging filter that adds request_id from context variable."""
+    def filter(self, record):
+        record.request_id = request_id_var.get()
+        return True
+
+
+# Add request_id filter to all loggers
+for handler in logging.root.handlers:
+    handler.addFilter(RequestIDFilter())
+
+
+async def request_id_middleware(request: Request, call_next):
+    """
+    Middleware to extract or generate request_id and make it available in context.
+    Propagates request_id through all logs for this request.
+    """
+    # Extract X-Request-ID header or generate a new UUID
+    request_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
+    
+    # Store in context variable for use in logs
+    token = request_id_var.set(request_id)
+    
+    try:
+        logger.debug(f"Incoming request: {request.method} {request.url.path}")
+        response = await call_next(request)
+        # Add request_id to response headers for tracing
+        response.headers['X-Request-ID'] = request_id
+        logger.debug(f"Response status: {response.status_code}")
+        return response
+    finally:
+        # Reset context variable
+        request_id_var.reset(token)
+
+
 # Create FastAPI app
 app = FastAPI(
     title="ScamGuard AI Service",
@@ -61,6 +102,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request_id middleware (applies after CORS, so runs first in request cycle)
+app.middleware('http')(request_id_middleware)
 
 # Add Prometheus instrumentation for metrics collection
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
@@ -101,6 +145,7 @@ async def health_check():
 async def predict_scam(request: PredictRequest):
     """
     Analyze text content for scam indicators.
+    Propagates request_id through logs for distributed tracing.
     
     Args:
         request: PredictRequest containing text to analyze
@@ -111,17 +156,24 @@ async def predict_scam(request: PredictRequest):
     Raises:
         HTTPException: If model is not loaded or prediction fails
     """
+    # Get request_id from context
+    req_id = request_id_var.get()
+    
     # Check if model is loaded
     if not ml_model.is_loaded:
-        logger.error("Prediction requested but model is not loaded")
+        logger.error(f"Prediction requested but model is not loaded")
         raise HTTPException(
             status_code=503,
             detail="AI model is not available. Please try again later."
         )
     
     try:
+        logger.info(f"Processing scam prediction for text with length {len(request.text)}")
+        
         # Get prediction from model
         result = ml_model.predict(request.text)
+        
+        logger.info(f"Scam prediction completed: risk_score={result.get('risk_score')}, is_scam={result.get('is_scam')}")
         
         # Return response
         return PredictResponse(**result)
@@ -138,6 +190,7 @@ async def predict_scam(request: PredictRequest):
 async def extract_text_from_image(file: UploadFile = File(...)):
     """
     Extract text from an uploaded image using OCR.
+    Propagates request_id through logs for distributed tracing.
     
     Args:
         file: Uploaded image file (PNG, JPG, JPEG)
@@ -149,6 +202,9 @@ async def extract_text_from_image(file: UploadFile = File(...)):
         HTTPException: If file validation fails or OCR extraction fails
     """
     start_time = time.time()
+    req_id = request_id_var.get()
+    
+    logger.info(f"Extracting text from image: {file.filename}")
     
     # Validate file type
     valid_mime_types = ["image/png", "image/jpeg", "image/jpg"]
@@ -201,6 +257,8 @@ async def extract_text_from_image(file: UploadFile = File(...)):
     try:
         extracted_text = ocr_engine.extract_text(image)
         processing_time = (time.time() - start_time) * 1000  # Convert to ms
+        
+        logger.info(f"OCR extraction completed: extracted {len(extracted_text)} characters in {processing_time:.2f}ms")
         
         return ExtractTextResponse(
             extracted_text=extracted_text,

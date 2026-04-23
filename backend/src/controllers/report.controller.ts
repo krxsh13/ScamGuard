@@ -34,7 +34,7 @@ export async function createReport(req: Request, res: Response): Promise<void> {
     if (report) {
       // Increment count and append reporter
       report.reportCount += 1;
-      if (!report.reporters.some(id => id.toString() === req.user.userId)) {
+      if (req.user && !report.reporters.some(id => id.toString() === req.user!.userId)) {
         report.reporters.push(userObjectId);
       }
       await report.save();

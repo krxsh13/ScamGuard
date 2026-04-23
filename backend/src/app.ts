@@ -13,6 +13,7 @@ import { metricsMiddleware, createMetricsRouter } from './middleware/metrics.js'
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { logger } from './config/logger.js';
 import authRoutes from './routes/auth.routes.js';
+import userRoutes from './routes/user.routes.js';
 import scansRoutes from './routes/scans.routes.js';
 import reportsRoutes from './routes/reports.routes.js';
 import analyticsRoutes from './routes/analytics.routes.js';
@@ -24,10 +25,8 @@ export function createApp(): Application {
   // Trust proxy (for rate limiting behind reverse proxy)
   app.set('trust proxy', 1);
 
-  // Sentry request handler must be first
-  if (process.env.SENTRY_DSN) {
-    app.use(Sentry.Handlers.requestHandler());
-  }
+  // Disable x-powered-by header for security
+  app.disable('x-powered-by');
 
   // Body parsing middleware
   app.use(express.json({ limit: '10mb' }));
@@ -64,6 +63,7 @@ export function createApp(): Application {
 
   // API routes
   app.use('/api/auth', authRoutes);
+  app.use('/api/user', userRoutes);
   app.use('/api/scans', scansRoutes);
   app.use('/api/reports', reportsRoutes);
   app.use('/api/analytics', analyticsRoutes);
@@ -71,11 +71,6 @@ export function createApp(): Application {
 
   // 404 handler
   app.use(notFoundHandler);
-
-  // Sentry error handler must be before other error handlers
-  if (process.env.SENTRY_DSN) {
-    app.use(Sentry.Handlers.errorHandler());
-  }
 
   // Error handler (must be last)
   app.use(errorHandler);

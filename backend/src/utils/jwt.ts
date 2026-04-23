@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { env } from '../config/env.js';
 import { getRedisClient } from '../config/redis.js';
@@ -45,9 +45,10 @@ export function parseExpiresIn(expiresIn: string): number {
  * @returns The signed access token
  */
 export function signAccessToken(payload: JWTPayload): string {
-  return jwt.sign(payload, env.JWT_SECRET, {
-    expiresIn: env.JWT_EXPIRES_IN,
-  });
+  const options: SignOptions = {
+    expiresIn: env.JWT_EXPIRES_IN as any,
+  };
+  return jwt.sign(payload, env.JWT_SECRET, options);
 }
 
 /**
@@ -62,9 +63,10 @@ export function signRefreshToken(payload: JWTPayload): string {
     jti: uuidv4(),
   };
 
-  return jwt.sign(tokenPayload, env.JWT_REFRESH_SECRET, {
-    expiresIn: env.JWT_REFRESH_EXPIRES_IN,
-  });
+  const options: SignOptions = {
+    expiresIn: env.JWT_REFRESH_EXPIRES_IN as any,
+  };
+  return jwt.sign(tokenPayload, env.JWT_REFRESH_SECRET, options);
 }
 
 /**
@@ -135,13 +137,13 @@ export async function revokeAllUserTokens(userId: string): Promise<void> {
   try {
     const client = getRedisClient();
     // Scan for all refreshToken:* keys and check if they belong to this user
-    let cursor = '0';
+    let cursor = 0;
     do {
       const reply = await client.scan(cursor, {
         MATCH: 'refreshToken:*',
         COUNT: 100,
       });
-      cursor = reply.cursor;
+      cursor = reply.cursor as number;
 
       for (const key of reply.keys) {
         const value = await client.get(key);
@@ -152,7 +154,7 @@ export async function revokeAllUserTokens(userId: string): Promise<void> {
           }
         }
       }
-    } while (cursor !== '0');
+    } while (cursor !== 0);
   } catch (error) {
     console.error('Failed to revoke all user tokens:', error);
     // Don't throw

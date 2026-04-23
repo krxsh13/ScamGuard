@@ -1,16 +1,90 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Shield, AlertTriangle, Users, BookOpen } from 'lucide-react';
+import axios from 'axios';
 
 interface HeroProps {
   setActiveSection: (section: string) => void;
 }
 
+interface AnalyticsStat {
+  icon: React.ComponentType<{ className: string }>;
+  value: string;
+  label: string;
+  loading?: boolean;
+}
+
 export function Hero({ setActiveSection }: HeroProps) {
-  const stats = [
-    { icon: AlertTriangle, value: '5.8M+', label: 'Scam attempts daily' },
-    { icon: Users, value: '300K+', label: 'Users protected' },
-    { icon: Shield, value: '99.2%', label: 'Detection accuracy' },
-  ];
+  const [stats, setStats] = useState<AnalyticsStat[]>([
+    { icon: AlertTriangle, value: 'Loading...', label: 'Scam attempts daily' },
+    { icon: Users, value: 'Loading...', label: 'Total scans processed' },
+    { icon: Shield, value: 'Loading...', label: 'Detection accuracy' },
+  ]);
+  
+  const [analyticsError, setAnalyticsError] = useState<boolean>(false);
+
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      try {
+        const response = await axios.get(
+          `${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/analytics/summary`,
+          { timeout: 5000 }
+        );
+        
+        const data = response.data.data;
+        
+        // Format the stats with actual data from API
+        setStats([
+          {
+            icon: AlertTriangle,
+            value: formatNumber(data.todayScans || 0),
+            label: 'Scam attempts today'
+          },
+          {
+            icon: Users,
+            value: formatNumber(data.monthScans || 0),
+            label: 'Scans processed this month'
+          },
+          {
+            icon: Shield,
+            value: `${Math.round(data.detectionRate || 0)}%`,
+            label: 'Detection accuracy'
+          },
+        ]);
+      } catch (error) {
+        // Silently fail - use fallback values
+        console.error('Failed to fetch analytics:', error);
+        setAnalyticsError(true);
+        setStats([
+          {
+            icon: AlertTriangle,
+            value: '5.8M+',
+            label: 'Scam attempts daily'
+          },
+          {
+            icon: Users,
+            value: '300K+',
+            label: 'Users protected'
+          },
+          {
+            icon: Shield,
+            value: '99.2%',
+            label: 'Detection accuracy'
+          },
+        ]);
+      }
+    };
+
+    fetchAnalytics();
+  }, []);
+
+  const formatNumber = (num: number): string => {
+    if (num >= 1000000) {
+      return (num / 1000000).toFixed(1) + 'M+';
+    } else if (num >= 1000) {
+      return (num / 1000).toFixed(1) + 'K+';
+    }
+    return num.toString();
+  };
 
   return (
     <div className="bg-gradient-to-br from-blue-50 to-indigo-100 py-16 lg:py-24">

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import jwt from 'jsonwebtoken';
-import { verifyToken, JWTPayload } from './jwt.js';
+import { verifyAccessToken, JWTPayload } from './jwt.js';
 import { env } from '../config/env.js';
 
 describe('JWT Token Expiration', () => {
@@ -31,11 +31,11 @@ describe('JWT Token Expiration', () => {
           expect(typeof expiredToken).toBe('string');
 
           // Property 2: Verifying expired token must throw an error
-          expect(() => verifyToken(expiredToken)).toThrow();
+          expect(() => verifyAccessToken(expiredToken)).toThrow();
 
           // Property 3: Error message should indicate expiration
           try {
-            verifyToken(expiredToken);
+            verifyAccessToken(expiredToken);
             // Should not reach here
             expect(true).toBe(false);
           } catch (error) {
@@ -63,7 +63,7 @@ describe('JWT Token Expiration', () => {
           });
 
           // Property: Token should still be valid (not expired yet)
-          const decoded = verifyToken(almostExpiredToken);
+          const decoded = verifyAccessToken(almostExpiredToken);
           expect(decoded.userId).toBe(payload.userId);
           expect(decoded.email).toBe(payload.email);
           expect(decoded.role).toBe(payload.role);
