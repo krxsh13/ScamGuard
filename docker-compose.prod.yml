@@ -1,0 +1,75 @@
+# Docker Compose for production
+# Usage: `docker-compose -f docker-compose.yml -f docker-compose.prod.yml up`
+# Note: This file overrides settings for production-grade deployment
+
+version: '3.9'
+
+services:
+  frontend:
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    # In production, add your SSL certificate paths
+    # volumes:
+    #   - /etc/letsencrypt/live/yourdomain.com/fullchain.pem:/etc/nginx/ssl/fullchain.pem
+    #   - /etc/letsencrypt/live/yourdomain.com/privkey.pem:/etc/nginx/ssl/privkey.pem
+    environment:
+      - VITE_API_URL=https://api.yourdomain.com
+
+  backend:
+    restart: always
+    ports:
+      - "127.0.0.1:4000:4000"  # Only expose to localhost, use reverse proxy
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    # Mount secrets from environment or secrets management
+    env_file:
+      - ./backend/.env.production
+
+  ai-service:
+    restart: always
+    ports:
+      - "127.0.0.1:8000:8000"  # Only expose to localhost, use reverse proxy
+    environment:
+      - PYTHON_UNBUFFERED=1
+
+  mongo:
+    restart: always
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo-backup:/backup
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD}
+      - MONGO_INITDB_DATABASE=scamguard
+
+  redis:
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+      - ./redis-backup:/backup
+
+# Production-grade volumes with named drivers
+volumes:
+  mongo_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/data/mongo
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/data/redis
+
+networks:
+  scamguard-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.9.0/24

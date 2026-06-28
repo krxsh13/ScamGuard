@@ -1,0 +1,55 @@
+# Docker Compose override for development
+# This file is automatically merged with docker-compose.yml when running `docker-compose up`
+# Usage: `docker-compose up` (uses both docker-compose.yml and docker-compose.override.yml)
+
+version: '3.9'
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/app
+      - /app/node_modules
+    ports:
+      - "3000:5173"
+    environment:
+      - VITE_API_URL=http://localhost:4000
+    command: npm run dev
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/package.json:/app/package.json
+      - /app/node_modules
+      - /app/dist
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://mongo:27017/scamguard
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  ai-service:
+    volumes:
+      - ./ai-service/app:/app/app
+      - ./ai-service/tests:/app/tests
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHON_UNBUFFERED=1
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  mongo:
+    ports:
+      - "27017:27017"
+
+  redis:
+    ports:
+      - "6379:6379"
